@@ -1,0 +1,207 @@
+module Parse where
+
+{-data ExprF a me = Never | Empty a | EChar a Char | forall b c. Seq (b -> c -> a) (me b) (me c) | 
+                Or (me a) (me a) | forall b. NMany ([b] -> a) (me b)-}
+
+{-
+data ExprF a me = Never | Empty a | EChar a Char | Seq (me b) (me c) | 
+                  Or (me a) (me a) | NMany (me b)
+
+instance Functor (ExprF a) where
+ fmap f Never = Never
+ fmap 
+--this won't work
+-}
+
+--ANOTHER Method idea, exploit distrubitivity property to represent stuff nicer and the same, idk how this works with nmany
+--wait does that not work bc OR is not commutitive?
+--the representation thing still applies tho
+
+--a disadvantage of using functions for the type of parsers is that they can't be shown, 
+--using a data type with embeded functions can show most itself
+--monad in a/b??
+type SubParser a b = (a,String) -> Maybe (b,String)--could generallise by paramaterising String, so I can parse on abtrary Ast's?
+type Parser a = String -> Maybe a --may want to be SubParser () a instead
+--many type annotations restricts type uneccesseraly
+
+char :: a -> Char -> SubParser b a
+char a c (_, []) = Nothing
+char a c (_, (x:xs)) | x==c = Just (a,xs)
+                     | otherwise = Nothing
+
+--what does this correspond to? seq?
+--this not same as pre seq
+seqPair :: SubParser a b -> SubParser a c -> SubParser a (b,c)
+seqPair f g (a,str)  = case f (a,str) of
+                        Just (b,rem) -> fmap (\(q,rem2) -> ((b,q), rem2)) $ g (a,rem)
+                        Nothing -> Nothing
+--seqPair f g (a,str) = fmap () $ f (a,str)
+
+seqPairL f g = apply (\(a,b) -> a) $ seqPair f g
+seqPairR f g = apply (\(a,b) -> b) $ seqPair f g
+
+seqP :: SubParser a b -> SubParser b c -> SubParser a c
+seqP f g (a,str)  = case f (a,str) of
+                     Just (b,rem) -> g (b,rem)
+                     Nothing -> Nothing
+
+--need to make decisions on these
+seqPl f g (a,str) = case seqP f g (a,str) of
+                     Just (b,rem) -> case g (b,rem) of
+                                       Just (c,rem2) -> Just (b,rem2)
+                                       Nothing -> Nothing
+                     Nothing -> Nothing
+seqPr f g (a,str) = case seqP f g (a,str) of
+                     Just (b,rem) -> case g (b,rem) of--could match on just rem
+                                       Just (c,rem2) -> Just (c,rem2)
+                                       Nothing -> Nothing
+                     Nothing -> Nothing
+
+orP :: SubParser a b -> SubParser a b -> SubParser a b
+orP f g (a,str) = case f (a,str) of
+                   Just (b,rem) -> Just (b,rem)
+                   Nothing -> g (a,str)
+
+--nmany f (a,str) = seqP f (nmany)-- ?
+--this allows a's to be passed along the f's of nmany, this is a fold version
+--nmany :: () --may re
+{-
+nmany f (a,str) = case f (a,str) of
+                    Just (b,rem) -> nmany f (b,rem)--apply f?
+                    Nothing -> (a,str)
+-}
+
+--the same as the old version, not a fold
+--nmany :: ((a, String) -> Maybe (b, String)) -> (a, String) -> ([b], String)
+nmany :: SubParser a b -> (a, String) -> ([b], String) --theres not a maybe as it always succeeds
+nmany f (a,str) = case f (a,str) of
+                    Just (b,rem) -> let (bs,remF) = nmany f (a,rem)
+                                    in (b:bs,remF)
+                    Nothing -> ([],str)
+
+nmanyJ :: SubParser a b -> SubParser a [b]
+nmanyJ f q = Just $ nmany f q
+
+oneOrMore :: SubParser a b -> SubParser a [b]
+oneOrMore f = apply (\(q,qs) -> q:qs) $ seqPair f (nmanyJ f)
+
+beforeNmany :: SubParser a b -> SubParser a b -> SubParser a [b]
+beforeNmany f g = apply (\(a,b) -> a:b) $ seqPair f (nmanyJ g)
+
+beforeBinaryNmany :: SubParser a (b,b) -> SubParser a b -> SubParser a [b]
+beforeBinaryNmany f g = apply (\((a,b),cs) -> a:b:cs) $ seqPair f (nmanyJ g)
+
+smallestRem :: [SubParser a b] -> SubParser a b
+smallestRem ps v = foldr f Nothing $ map ($ v) ps
+            where f :: Maybe (b,String) -> Maybe (b,String) -> Maybe (b,String)
+                  f Nothing y = y
+                  f x Nothing = x
+                  f x@(Just (_,rem1)) y@(Just (_,rem2)) | length rem1 <= length rem2 = x
+                                                        | otherwise = y
+
+
+--apply f (a,str) = (f a, str)
+apply :: (b -> c) -> SubParser a b -> SubParser a c 
+apply f g (a,str) = fmap (\(v,rem) -> (f v, rem)) $ g (a,str)
+
+{-applyStr :: (String -> c) -> SubParser a b -> SubParser a c
+applyStr f g (a,str) = fmap (\(v,rem) -> (f rem, rem)) $ g (a,str)
+
+swap :: SubParser a String -> SubParser a String
+swap g (a,str) = fmap (\(v,rem) -> (rem,v)) $ g (a,str)-}
+
+never :: SubParser a b
+never (a,str) = Nothing
+
+always :: b -> SubParser a b
+always v (a,str) = Just (v,str)
+
+word (x:xs) = apply (\(a,b) -> a:b) $ seqPair (char x x) (word xs)
+word [] = apply (\a -> []) $ always ()
+
+topParse :: (String -> Maybe (a,String)) -> String -> Maybe a --
+topParse expr str = case expr str of
+                      Just (a,"") -> Just a
+                      otherwise -> Nothing
+topParse2 :: SubParser a b -> a -> Parser b
+topParse2 expr i str = case expr (i,str) of--dummy value of i, I expect it to be unused, could use unit/()
+                      Just (a,"") -> Just a
+                      otherwise -> Nothing
+
+--parseSub expr str = topParse2 expr () str
+--make parseable typeclass? subparser and default parser?
+----------use examples
+{-
+
+--{-
+--I have a lot of proiblems with needing initial values whne they are not used
+--varChar = orP (char 'a' 'a') $ orP (char 'b' 'b') $ orP (char 'c' 'c') (char 'd' 'd')
+varChar = foldr1 orP $ zipWith char ['a'..'z'] ['a'..'z']
+--var = seqP varChar (nmanyJ varChar) --this seqP gives a result to the right side expr, I could instead return a tuple?
+{-
+var = apply Var $ seqP varChar (\(a,rem) -> 
+                                   let Just (b,rem2) = nmanyJ varChar ('q',rem)
+                                   in Just (a:b,rem2))
+-}
+--I prefer seqPair over seqP
+var = apply (\(c,cs) -> Var $ c:cs) $ seqPair varChar (nmanyJ varChar)
+
+data Lambda = Var String | Abs Lambda Lambda | App Lambda Lambda deriving Show
+
+
+--topParse2 var2 0 "somevarname"
+
+labs = apply (\(v,e) -> Abs v e) $ seqPairR (char '|' '|') $ seqPair var $ seqPairR (char '.' '.') lexpr
+app = apply (\(a,b) -> App a b) $ seqPairR (char '(' '(') $ seqPair lexpr $ seqPairR (char ' ' ' ') $ seqPairL lexpr (char ')' ')')
+lexpr = orP var $ orP labs app
+--topParse2 lexpr 0 "|x.x"
+
+{-
+labs = seqPr (char '|' '|') $ seqP var $ seqPr (char '.' '.') expr
+app = error ""
+expr = orP var $ orP abs expr
+-}
+---}
+
+numChar = orP (char 0 '0') (char 1 '1')
+number = apply (\(a,bs) -> foldr (+) 0 (a:bs)) $ seqPair numChar (nmanyJ numChar)
+
+
+data Lisp = Symbol String | Cons Lisp Lisp | Nil deriving Show
+
+symbolChar = foldr1 orP $ zipWith char ['a'..'z'] ['a'..'z']--generalise
+--symbol = Seq (\a b -> Symbol $ a:b) symbolChar $ NMany id symbolChar
+symbol = apply Symbol $ oneOrMore symbolChar
+constant = never
+
+atom = orP symbol constant
+
+nil = apply (\_ -> Nil) $ seqPair (char '(' '(') (char ')' ')')--nil not an atom?
+--list = Or nil $ seqR (char '(') $ Seq (\a b -> foldr Cons Nil $ a:b) expr $ seqL (NMany id $ seqR (char ' ') expr) (char ')')
+list = orP nil $ 
+       seqPairR (char '(' '(') $ 
+         apply (\(a,b) -> foldr Cons Nil $ a:b) $ seqPair expr $ seqPairL (nmanyJ $ seqPairR (char ' ' ' ') expr) 
+       (char ')' ')')--how could I make this neater??
+--infix operators???
+--obeys distributivity etc???
+expr = orP atom list
+
+{-
+list = nil <|>
+       '(' *>
+         (apply (\(a,b) -> foldr Cons Nil $ a:b) 
+            expr <*> (nmanyJ $ ' ' *> expr) )
+       <* ')'
+-}
+--nil <|> 
+--  (apply (\(a,b) -> foldr Cons Nil $ a:b) $ 
+--     '(' *> (expr <*> nmany (' ' *> expr)) <* ')')
+
+test1 = topParse2 lexpr () "(|x.|z.(x z) |y.y)"
+test2 = topParse2 expr () "(a (b c) d ((e f) (g h)))" 
+
+test3 = topParse2 lexpr () "(|x.|z.(x z) |y.y"  --Nothing
+test4 = topParse2 expr () "(q q) w" --Nothing
+
+
+-}
