@@ -1,7 +1,7 @@
 module Parse where
 
 {-
-simple parser combinator experiments, trying to figure out stuff on my own.
+Simple parser combinator experiments, trying to figure out stuff on my own.
 Many things could be improved:
  Changing from Maybe to []
  Better naming
@@ -105,6 +105,8 @@ parse expr str = parseWith expr () str
      
 
 ----use examples and experiments
+--can be uncommented when I set only the above stuff to be exported
+{-
 
 varChar = foldr1 orP $ zipWith char ['a'..'z'] ['a'..'z']
 
@@ -167,4 +169,4 @@ test3 = parse lexpr "(|x.|z.(x z) |y.y" --should fail
 test4 = parse expr "(q q) w" --should fail
 
 
-
+-}
