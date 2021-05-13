@@ -1,1 +1,1 @@
-# LK-theorem-prover
+# Interpreters-and-LK-theorem-prover
